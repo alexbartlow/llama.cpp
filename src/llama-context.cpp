@@ -63,6 +63,9 @@ llama_context::llama_context(
 
     // Fungible MoE: chunked routing
     cparams.moe_routing_chunk = params.moe_routing_chunk;
+    LLAMA_LOG_INFO("%s: moe_routing_chunk=%d, fungible_layers=%s\n",
+        __func__, params.moe_routing_chunk,
+        params.fungible_layers ? params.fungible_layers : "(null)");
     if (params.fungible_layers != nullptr) {
         // Parse fungible layers string into set
         std::string str(params.fungible_layers);
