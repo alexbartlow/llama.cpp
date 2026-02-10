@@ -5,6 +5,7 @@
 #include "llama-graph.h"
 #include "llama-hparams.h"
 #include "llama-memory.h"
+#include "llama-mmap.h"
 #include "llama-vocab.h"
 
 #include <map>
@@ -544,6 +545,9 @@ struct llama_model {
 
     // TODO: move this to new llm_arch_model_i interface
     ggml_cgraph * build_graph(const llm_graph_params & params) const;
+
+    // Access mmaps for MoE prefetching
+    const llama_mmaps * get_mmaps() const;
 
 private:
     llama_model_params params;

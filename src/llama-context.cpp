@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 //
@@ -59,6 +60,70 @@ llama_context::llama_context(
 
     cparams.cb_eval           = params.cb_eval;
     cparams.cb_eval_user_data = params.cb_eval_user_data;
+
+    // Fungible MoE: chunked routing
+    cparams.moe_routing_chunk = params.moe_routing_chunk;
+    if (params.fungible_layers != nullptr) {
+        // Parse fungible layers string into set
+        std::string str(params.fungible_layers);
+        std::stringstream ss(str);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            size_t start = token.find_first_not_of(" \t");
+            size_t end = token.find_last_not_of(" \t");
+            if (start == std::string::npos) continue;
+            token = token.substr(start, end - start + 1);
+            size_t dash = token.find('-');
+            if (dash != std::string::npos) {
+                int lo = std::stoi(token.substr(0, dash));
+                int hi = std::stoi(token.substr(dash + 1));
+                for (int i = lo; i <= hi && i < (int)hparams.n_layer; ++i) {
+                    cparams.fungible_layer_set.insert(i);
+                }
+            } else {
+                int layer = std::stoi(token);
+                if (layer < (int)hparams.n_layer) {
+                    cparams.fungible_layer_set.insert(layer);
+                }
+            }
+        }
+        if (!cparams.fungible_layer_set.empty()) {
+            LLAMA_LOG_INFO("%s: fungible layers: %zu, routing chunk: %d\n",
+                __func__, cparams.fungible_layer_set.size(), cparams.moe_routing_chunk);
+        }
+    }
+
+    // Initialize MoE expert prefetcher if enabled and model has experts
+    if (params.moe_prefetch && hparams.n_expert > 0) {
+        const llama_mmaps * mmaps = model.get_mmaps();
+        if (mmaps && !mmaps->empty()) {
+            moe_prefetcher = std::make_unique<llama_moe_prefetcher>();
+            moe_prefetcher->init(*mmaps, hparams.n_layer, hparams.n_expert);
+            moe_prefetcher->set_fungible_layers(cparams.fungible_layer_set);
+
+            // Register expert tensors from each layer
+            for (uint32_t il = 0; il < hparams.n_layer; ++il) {
+                const auto & layer = model.layers[il];
+                if (layer.ffn_up_exps || layer.ffn_gate_exps || layer.ffn_down_exps) {
+                    moe_prefetcher->register_layer_experts(
+                        il,
+                        layer.ffn_up_exps,
+                        layer.ffn_gate_exps,
+                        layer.ffn_down_exps
+                    );
+                }
+            }
+
+            // Set the prefetch callback - note: this overrides any user-provided callback
+            cparams.cb_eval = llama_moe_prefetch_eval_callback;
+            cparams.cb_eval_user_data = moe_prefetcher.get();
+
+            LLAMA_LOG_INFO("%s: MoE prefetcher enabled for %u layers, %u experts\n",
+                __func__, hparams.n_layer, hparams.n_expert);
+        } else {
+            LLAMA_LOG_WARN("%s: MoE prefetch requested but model not using mmap\n", __func__);
+        }
+    }
 
     // Initialize backend samplers here so they are part of the sampling graph
     // before the reserve passes run later in this function. This avoids a later
@@ -2974,6 +3039,9 @@ llama_context_params llama_context_default_params() {
         /*.type_v                      =*/ GGML_TYPE_F16,
         /*.abort_callback              =*/ nullptr,
         /*.abort_callback_data         =*/ nullptr,
+        /*.fungible_layers             =*/ nullptr,
+        /*.moe_routing_chunk           =*/ 0,
+        /*.moe_prefetch                =*/ false,
         /*.embeddings                  =*/ false,
         /*.offload_kqv                 =*/ true,
         /*.no_perf                     =*/ true,

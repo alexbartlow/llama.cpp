@@ -49,6 +49,17 @@ struct llama_mmap {
 
     void unmap_fragment(size_t first, size_t last);
 
+    // Prefetch a range of the mmap into memory (async)
+    // Uses madvise(MADV_WILLNEED) on POSIX, PrefetchVirtualMemory on Windows
+    void prefetch_range(size_t offset, size_t len);
+
+    // Prefetch by raw pointer (must be within mmap range)
+    // Returns true if pointer was in range and prefetch was issued
+    bool prefetch_ptr(const void * ptr, size_t len);
+
+    // Check if a pointer is within this mmap's address range
+    bool contains(const void * ptr) const;
+
     static const bool SUPPORTED;
 
 private:

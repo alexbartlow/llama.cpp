@@ -390,6 +390,13 @@ struct common_params {
 
     enum llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER; // how to split the model across GPUs
 
+    // fungible MoE expert streaming params
+    std::string pin_layers;             // layers to force on GPU, e.g. "0-5,36-47"
+    std::string fungible_layers;        // layers where chunked routing is allowed, e.g. "6-35"
+    int32_t expert_cache_size = 0;      // experts to keep hot per fungible layer (0 = disabled)
+    int32_t moe_routing_chunk = 0;      // reuse expert routing for N tokens in fungible layers (0 = disabled)
+    bool moe_prefetch = false;          // prefetch next layer's experts using madvise
+
     struct cpu_params cpuparams;
     struct cpu_params cpuparams_batch;
 

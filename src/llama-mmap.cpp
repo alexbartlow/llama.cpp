@@ -588,6 +588,59 @@ void * llama_mmap::addr() const { return pimpl->addr; }
 
 void llama_mmap::unmap_fragment(size_t first, size_t last) { pimpl->unmap_fragment(first, last); }
 
+void llama_mmap::prefetch_range(size_t offset, size_t len) {
+    if (offset >= pimpl->size) return;
+    if (offset + len > pimpl->size) {
+        len = pimpl->size - offset;
+    }
+    if (len == 0) return;
+
+    void * range_addr = static_cast<char*>(pimpl->addr) + offset;
+
+#ifdef _POSIX_MAPPED_FILES
+    // Use posix_madvise for async prefetch
+    if (posix_madvise(range_addr, len, POSIX_MADV_WILLNEED)) {
+        // Silently ignore errors - prefetch is best-effort
+    }
+#elif defined(_WIN32)
+#if _WIN32_WINNT >= 0x602
+    // Try to use PrefetchVirtualMemory if available
+    static BOOL (WINAPI *pPrefetchVirtualMemory)(HANDLE, ULONG_PTR, PWIN32_MEMORY_RANGE_ENTRY, ULONG) = nullptr;
+    static bool checked = false;
+    if (!checked) {
+        HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+        if (hKernel32) {
+            pPrefetchVirtualMemory = (decltype(pPrefetchVirtualMemory))(void *)GetProcAddress(hKernel32, "PrefetchVirtualMemory");
+        }
+        checked = true;
+    }
+    if (pPrefetchVirtualMemory) {
+        WIN32_MEMORY_RANGE_ENTRY range;
+        range.VirtualAddress = range_addr;
+        range.NumberOfBytes = (SIZE_T)len;
+        pPrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0);
+    }
+#endif
+#endif
+}
+
+bool llama_mmap::contains(const void * ptr) const {
+    const char * p = static_cast<const char *>(ptr);
+    const char * base = static_cast<const char *>(pimpl->addr);
+    return p >= base && p < base + pimpl->size;
+}
+
+bool llama_mmap::prefetch_ptr(const void * ptr, size_t len) {
+    if (!contains(ptr)) {
+        return false;
+    }
+    const char * p = static_cast<const char *>(ptr);
+    const char * base = static_cast<const char *>(pimpl->addr);
+    size_t offset = p - base;
+    prefetch_range(offset, len);
+    return true;
+}
+
 #if defined(_POSIX_MEMLOCK_RANGE) || defined(_WIN32)
 const bool llama_mmap::SUPPORTED  = true;
 #else

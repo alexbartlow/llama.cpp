@@ -3,6 +3,7 @@
 #include "llama.h"
 
 #include <cstdint>
+#include <set>
 
 #define LLAMA_MAX_SEQ 256
 
@@ -41,4 +42,8 @@ struct llama_cparams {
 
     ggml_backend_sched_eval_callback cb_eval;
     void * cb_eval_user_data;
+
+    // Fungible MoE: chunked expert routing
+    std::set<int> fungible_layer_set;  // layers where chunked routing applies
+    int32_t moe_routing_chunk = 0;     // reuse routing for N tokens (0 = disabled)
 };

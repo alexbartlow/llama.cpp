@@ -4,11 +4,13 @@
 #include "llama-cparams.h"
 #include "llama-graph.h"
 #include "llama-adapter.h"
+#include "llama-moe-prefetch.h"
 
 #include "ggml-cpp.h"
 #include "ggml-opt.h"
 
 #include <map>
+#include <memory>
 #include <vector>
 
 struct llama_model;
@@ -353,6 +355,9 @@ private:
 
     // env: LLAMA_GRAPH_REUSE_DISABLE
     bool graph_reuse_disable = false;
+
+    // MoE expert prefetcher (for fungible layers with mmap)
+    std::unique_ptr<llama_moe_prefetcher> moe_prefetcher;
 
     // perf
     mutable int64_t t_start_us  = 0;

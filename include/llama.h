@@ -287,6 +287,12 @@ extern "C" {
         const struct llama_model_tensor_buft_override * tensor_buft_overrides;
 
         int32_t n_gpu_layers; // number of layers to store in VRAM, a negative value means all layers
+
+        // fungible MoE expert streaming
+        const char * pin_layers;      // layers to force on GPU, e.g. "0-5,36-47" (NULL = use n_gpu_layers)
+        const char * fungible_layers; // layers where expert substitution is allowed (NULL = none)
+        int32_t expert_cache_size;    // experts to keep hot per fungible layer (0 = disabled)
+
         enum llama_split_mode split_mode; // how to split the model across multiple GPUs
 
         // the GPU that is used for the entire model when split_mode is LLAMA_SPLIT_MODE_NONE
@@ -358,6 +364,11 @@ extern "C" {
         // currently works only with CPU execution
         ggml_abort_callback abort_callback;
         void *              abort_callback_data;
+
+        // Fungible MoE: chunked expert routing
+        const char * fungible_layers;   // layers where chunked routing is applied, e.g. "6-35" (NULL = none)
+        int32_t moe_routing_chunk;      // reuse expert routing for N tokens (0 = disabled)
+        bool moe_prefetch;              // prefetch next layer's experts using madvise (requires mmap)
 
         // Keep the booleans together and at the end of the struct to avoid misalignment during copy-by-value.
         bool embeddings;  // if true, extract embeddings (together with logits)

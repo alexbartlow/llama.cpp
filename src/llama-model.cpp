@@ -23,8 +23,46 @@
 #include <functional>
 #include <map>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
+
+// Parse layer range string like "0-5,36-47" into a set of layer indices
+static std::set<int> parse_layer_range(const char * range_str, int max_layer) {
+    std::set<int> layers;
+    if (range_str == nullptr || range_str[0] == '\0') {
+        return layers;
+    }
+
+    std::string str(range_str);
+    std::stringstream ss(str);
+    std::string token;
+
+    while (std::getline(ss, token, ',')) {
+        // trim whitespace
+        size_t start = token.find_first_not_of(" \t");
+        size_t end = token.find_last_not_of(" \t");
+        if (start == std::string::npos) continue;
+        token = token.substr(start, end - start + 1);
+
+        size_t dash = token.find('-');
+        if (dash != std::string::npos) {
+            // range like "6-35"
+            int lo = std::stoi(token.substr(0, dash));
+            int hi = std::stoi(token.substr(dash + 1));
+            for (int i = lo; i <= hi && i < max_layer; ++i) {
+                layers.insert(i);
+            }
+        } else {
+            // single layer
+            int layer = std::stoi(token);
+            if (layer < max_layer) {
+                layers.insert(layer);
+            }
+        }
+    }
+    return layers;
+}
 
 const char * llm_type_name(llm_type type) {
     switch (type) {
@@ -2596,13 +2634,38 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
     const int i_gpu_start = std::max(int(hparams.n_layer) + 1 - n_gpu_layers, 0);
     const int act_gpu_layers = devices.empty() ? 0 : std::min(n_gpu_layers, int(n_layer) + 1);
+
+    // Parse pinned layers for fungible MoE streaming
+    // If pin_layers is specified, use explicit set instead of contiguous range
+    std::set<int> pin_layer_set = parse_layer_range(params.pin_layers, n_layer + 1);
+    const bool use_explicit_pinning = !pin_layer_set.empty();
+
+    if (use_explicit_pinning) {
+        LLAMA_LOG_INFO("load_tensors: using explicit layer pinning (%zu layers on GPU)\n", pin_layer_set.size());
+    }
+
     auto get_layer_buft_list = [&](int il) -> llama_model::impl::layer_dev {
         const bool is_swa = il < int(hparams.n_layer) && hparams.is_swa(il);
-        if (il < i_gpu_start || (il - i_gpu_start) >= act_gpu_layers) {
+
+        bool on_gpu;
+        if (use_explicit_pinning) {
+            // Explicit pinning mode: only pinned layers go to GPU
+            on_gpu = pin_layer_set.count(il) > 0;
+        } else {
+            // Default contiguous mode
+            on_gpu = !(il < i_gpu_start || (il - i_gpu_start) >= act_gpu_layers);
+        }
+
+        if (!on_gpu || devices.empty()) {
             LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(cpu_dev), is_swa);
             return {cpu_dev, &pimpl->cpu_buft_list};
         }
-        const int layer_gpu = std::upper_bound(splits.begin(), splits.begin() + n_devices(), float(il - i_gpu_start)/act_gpu_layers) - splits.begin();
+
+        // For explicit pinning, use main GPU; otherwise use split logic
+        int layer_gpu = 0;
+        if (!use_explicit_pinning && act_gpu_layers > 0) {
+            layer_gpu = std::upper_bound(splits.begin(), splits.begin() + n_devices(), float(il - i_gpu_start)/act_gpu_layers) - splits.begin();
+        }
         auto * dev = devices.at(layer_gpu);
         LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(dev), is_swa);
         return {dev, &pimpl->gpu_buft_list.at(dev)};
@@ -7886,6 +7949,10 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
     return res;
 }
 
+const llama_mmaps * llama_model::get_mmaps() const {
+    return &pimpl->mappings;
+}
+
 ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
     std::unique_ptr<llm_graph_context> llm;
 
@@ -8390,6 +8457,9 @@ llama_model_params llama_model_default_params() {
         /*.devices                     =*/ nullptr,
         /*.tensor_buft_overrides       =*/ nullptr,
         /*.n_gpu_layers                =*/ -1,
+        /*.pin_layers                  =*/ nullptr,
+        /*.fungible_layers             =*/ nullptr,
+        /*.expert_cache_size           =*/ 0,
         /*.split_mode                  =*/ LLAMA_SPLIT_MODE_LAYER,
         /*.main_gpu                    =*/ 0,
         /*.tensor_split                =*/ nullptr,

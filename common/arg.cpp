@@ -2331,6 +2331,41 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_N_GPU_LAYERS"));
     add_opt(common_arg(
+        {"--pin-layers"}, "RANGE",
+        "layers to force on GPU for MoE models, e.g. \"0-5,36-47\" (sensitive layers)",
+        [](common_params & params, const std::string & value) {
+            params.pin_layers = value;
+        }
+    ).set_env("LLAMA_ARG_PIN_LAYERS"));
+    add_opt(common_arg(
+        {"--fungible-layers"}, "RANGE",
+        "layers where expert substitution is allowed on cache miss, e.g. \"6-35\"",
+        [](common_params & params, const std::string & value) {
+            params.fungible_layers = value;
+        }
+    ).set_env("LLAMA_ARG_FUNGIBLE_LAYERS"));
+    add_opt(common_arg(
+        {"--expert-cache-size"}, "N",
+        "number of experts to keep hot per fungible layer (default: 0 = disabled)",
+        [](common_params & params, const std::string & value) {
+            params.expert_cache_size = std::stoi(value);
+        }
+    ).set_env("LLAMA_ARG_EXPERT_CACHE_SIZE"));
+    add_opt(common_arg(
+        {"--moe-routing-chunk"}, "N",
+        "reuse expert routing for N consecutive tokens in fungible layers (default: 0 = disabled)",
+        [](common_params & params, const std::string & value) {
+            params.moe_routing_chunk = std::stoi(value);
+        }
+    ).set_env("LLAMA_ARG_MOE_ROUTING_CHUNK"));
+    add_opt(common_arg(
+        {"--moe-prefetch"},
+        "prefetch next layer's experts using madvise (requires mmap, improves throughput)",
+        [](common_params & params) {
+            params.moe_prefetch = true;
+        }
+    ).set_env("LLAMA_ARG_MOE_PREFETCH"));
+    add_opt(common_arg(
         {"-sm", "--split-mode"}, "{none,layer,row}",
         "how to split the model across multiple GPUs, one of:\n"
         "- none: use one GPU only\n"

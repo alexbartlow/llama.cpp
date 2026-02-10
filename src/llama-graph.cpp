@@ -1262,6 +1262,36 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cb(selected_experts->src[0], "ffn_moe_argsort", il);
     cb(selected_experts, "ffn_moe_topk", il);
 
+    // Fungible MoE: chunked expert routing
+    // For fungible layers, reuse the same expert selection for N consecutive tokens.
+    // This improves cache locality by keeping the same experts hot for longer.
+    if (cparams.moe_routing_chunk > 1 &&
+        cparams.fungible_layer_set.count(il) > 0 &&
+        n_tokens > 1) {
+        const int64_t chunk_size = cparams.moe_routing_chunk;
+        const int64_t n_chunks = (n_tokens + chunk_size - 1) / chunk_size;
+
+        // For each chunk, take the first token's expert selection and replicate it
+        // selected_experts shape: [n_expert_used, n_tokens]
+        // We want to reshape to [n_expert_used, chunk_size, n_chunks], take [:, 0, :], then repeat
+
+        // Pad n_tokens to be divisible by chunk_size for clean reshape
+        if (n_tokens % chunk_size == 0) {
+            // Clean case: reshape, slice first of each chunk, repeat
+            ggml_tensor * reshaped = ggml_reshape_3d(ctx0, selected_experts, n_expert_used, chunk_size, n_chunks);
+            // Take first element of each chunk: view at offset 0 with stride chunk_size
+            ggml_tensor * chunk_leaders = ggml_view_3d(ctx0, reshaped,
+                n_expert_used, 1, n_chunks,
+                reshaped->nb[1], reshaped->nb[2], 0);
+            // Repeat along the chunk dimension
+            selected_experts = ggml_repeat_4d(ctx0, chunk_leaders, n_expert_used, chunk_size, n_chunks, 1);
+            selected_experts = ggml_reshape_2d(ctx0, selected_experts, n_expert_used, n_tokens);
+            cb(selected_experts, "ffn_moe_topk_chunked", il);
+        }
+        // else: non-divisible case - fall through to use original selection
+        // (could implement padding/masking but keeping it simple for now)
+    }
+
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
         // TODO: Use scalar div instead when/if implemented
         ggml_tensor * f_sel = ggml_cast(ctx0, selected_experts, GGML_TYPE_F32);
