@@ -1278,7 +1278,9 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         // Pad n_tokens to be divisible by chunk_size for clean reshape
         if (n_tokens % chunk_size == 0) {
             // Clean case: reshape, slice first of each chunk, repeat
-            ggml_tensor * reshaped = ggml_reshape_3d(ctx0, selected_experts, n_expert_used, chunk_size, n_chunks);
+            // Ensure contiguous before reshape (argsort_top_k may return non-contiguous)
+            ggml_tensor * sel_cont = ggml_cont(ctx0, selected_experts);
+            ggml_tensor * reshaped = ggml_reshape_3d(ctx0, sel_cont, n_expert_used, chunk_size, n_chunks);
             // Take first element of each chunk: view at offset 0 with stride chunk_size
             ggml_tensor * chunk_leaders = ggml_view_3d(ctx0, reshaped,
                 n_expert_used, 1, n_chunks,
